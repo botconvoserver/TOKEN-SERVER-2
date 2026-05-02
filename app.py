@@ -1,11 +1,25 @@
-from flask import Flask, request, render_template, jsonify, Response
+from flask import Flask, request, render_template_string, jsonify
 import requests
 import time
 import threading
-import re
 import json
+import os
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
+
+# Global variables for controlling the sending process
+sending_active = False
+sending_thread = None
+current_status = {
+    'active': False,
+    'total_sent': 0,
+    'total_failed': 0,
+    'current_message': '',
+    'start_time': None,
+    'thread_id': '',
+    'hater_name': ''
+}
 
 headers = {
     'Connection': 'keep-alive',
@@ -18,578 +32,446 @@ headers = {
     'referer': 'www.google.com'
 }
 
-# Global variable to control message sending
-sending_active = False
-sending_thread = None
-
-@app.route('/')
-def index():
-    return '''
-    <html lang="en">
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Facebook Tool Suite - Xmarty Ayush King</title>
+    <title>Xmarty Ayush King - Advanced Messenger Tool</title>
     <style>
-        @keyframes gradientBG {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-        
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #0d1b1a 100%);
+            font-family: 'Courier New', monospace;
             padding: 20px;
             min-height: 100vh;
         }
-        
-        .main-container {
-            max-width: 1400px;
+
+        .container {
+            max-width: 1200px;
             margin: 0 auto;
         }
-        
+
         /* Header Styles */
         .header {
             text-align: center;
-            margin-bottom: 40px;
-            padding: 20px;
-            background: rgba(0,0,0,0.5);
-            border-radius: 20px;
-            backdrop-filter: blur(10px);
+            margin-bottom: 30px;
+            animation: glow 2s ease-in-out infinite alternate;
         }
-        
+
+        @keyframes glow {
+            from { text-shadow: 0 0 5px pink; }
+            to { text-shadow: 0 0 20px darkyellow, 0 0 30px darkgreen; }
+        }
+
         .header h1 {
             font-size: 2.5em;
-            background: linear-gradient(45deg, #ff6b6b, #ffe66d, #ff6b6b);
+            background: linear-gradient(45deg, pink, darkyellow, darkwhite);
             -webkit-background-clip: text;
             background-clip: text;
             color: transparent;
-            animation: gradientBG 3s ease infinite;
-            background-size: 200% 200%;
+            animation: colorChange 3s infinite;
         }
-        
+
+        @keyframes colorChange {
+            0% { color: pink; }
+            50% { color: darkyellow; }
+            100% { color: darkwhite; }
+        }
+
         /* Feature Menu */
         .feature-menu {
-            display: flex;
-            gap: 15px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
             margin-bottom: 30px;
-            flex-wrap: wrap;
-            justify-content: center;
         }
-        
-        .feature-btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 50px;
+
+        .feature-card {
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 15px;
+            padding: 20px;
             cursor: pointer;
-            font-size: 16px;
-            font-weight: bold;
             transition: all 0.3s ease;
-            background: rgba(255,255,255,0.1);
-            color: white;
-            backdrop-filter: blur(5px);
+            border: 2px solid darkyellow;
+            text-align: center;
         }
-        
-        .feature-btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            border-color: pink;
         }
-        
-        .feature-btn.active {
-            background: linear-gradient(45deg, #ff6b6b, #ffe66d);
-            color: #1a1a2e;
+
+        .feature-card.active {
+            border-color: pink;
+            background: rgba(255, 20, 147, 0.2);
         }
-        
-        /* Feature Container */
-        .feature-container {
-            background: rgba(0,0,0,0.7);
+
+        .feature-card h3 {
+            color: pink;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+        }
+
+        .feature-card p {
+            color: darkwhite;
+            font-size: 0.9em;
+        }
+
+        /* Main Content Area */
+        .main-content {
+            background: rgba(0, 0, 0, 0.8);
             border-radius: 20px;
             padding: 30px;
-            backdrop-filter: blur(10px);
-            margin-bottom: 30px;
-            display: none;
+            margin-bottom: 20px;
+            border: 1px solid darkyellow;
         }
-        
-        .feature-container.active {
-            display: block;
-            animation: fadeIn 0.5s ease;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        /* Form Styles */
+
         .form-group {
             margin-bottom: 20px;
         }
-        
+
         label {
+            color: pink;
             display: block;
             margin-bottom: 8px;
-            color: #ffe66d;
             font-weight: bold;
         }
-        
+
         input, select, textarea {
             width: 100%;
             padding: 12px;
-            border: 2px solid #ffe66d;
-            background: rgba(0,0,0,0.5);
-            color: white;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid darkyellow;
             border-radius: 10px;
+            color: darkwhite;
             font-size: 14px;
             transition: all 0.3s ease;
         }
-        
+
         input:focus, select:focus, textarea:focus {
             outline: none;
-            border-color: #ff6b6b;
-            box-shadow: 0 0 10px rgba(255,107,107,0.3);
+            border-color: pink;
+            box-shadow: 0 0 10px rgba(255, 20, 147, 0.5);
         }
-        
+
         button {
-            background: linear-gradient(45deg, #ff6b6b, #ffe66d);
-            color: #1a1a2e;
+            background: linear-gradient(45deg, darkgreen, darkyellow);
+            color: white;
             padding: 12px 30px;
             border: none;
-            border-radius: 50px;
+            border-radius: 25px;
             cursor: pointer;
-            font-weight: bold;
             font-size: 16px;
+            font-weight: bold;
             transition: all 0.3s ease;
+            margin: 5px;
         }
-        
+
         button:hover {
             transform: scale(1.05);
-            box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
         }
-        
-        .stop-btn {
+
+        .btn-stop {
             background: linear-gradient(45deg, #ff4444, #cc0000);
-            margin-left: 10px;
         }
-        
-        /* Output Area */
-        .output-area {
-            background: rgba(0,0,0,0.5);
-            border-radius: 10px;
+
+        .btn-check {
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+        }
+
+        /* Status Panel */
+        .status-panel {
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 15px;
             padding: 20px;
             margin-top: 20px;
-            max-height: 400px;
-            overflow-y: auto;
-            font-family: 'Courier New', monospace;
+            border: 1px solid darkyellow;
         }
-        
-        .output-line {
-            padding: 5px;
+
+        .status-item {
+            color: darkwhite;
+            padding: 10px;
             margin: 5px 0;
-            border-left: 3px solid;
-            animation: slideIn 0.3s ease;
+            border-left: 3px solid pink;
         }
-        
-        @keyframes slideIn {
-            from { opacity: 0; transform: translateX(-20px); }
-            to { opacity: 1; transform: translateX(0); }
+
+        .uptime {
+            color: #00ff00;
+            font-weight: bold;
+            animation: pulse 1s infinite;
         }
-        
-        .output-success {
-            border-left-color: #00ff00;
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .result-box {
+            background: rgba(0,0,0,0.5);
+            border-radius: 10px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+
+        .result-line {
+            color: darkwhite;
+            padding: 5px;
+            font-size: 12px;
+            border-bottom: 1px solid #333;
+        }
+
+        .success {
             color: #00ff00;
         }
-        
-        .output-error {
-            border-left-color: #ff0000;
-            color: #ff9999;
+
+        .error {
+            color: #ff4444;
         }
-        
-        .output-info {
-            border-left-color: #ffe66d;
-            color: #ffe66d;
-        }
-        
-        /* Scrollbar */
-        .output-area::-webkit-scrollbar {
-            width: 8px;
-        }
-        
-        .output-area::-webkit-scrollbar-track {
-            background: rgba(255,255,255,0.1);
-            border-radius: 10px;
-        }
-        
-        .output-area::-webkit-scrollbar-thumb {
-            background: #ffe66d;
-            border-radius: 10px;
-        }
-        
-        /* Responsive */
+
         @media (max-width: 768px) {
             .feature-menu {
-                flex-direction: column;
+                grid-template-columns: 1fr;
             }
             
-            .feature-btn {
-                width: 100%;
+            .container {
+                padding: 10px;
             }
         }
-        
-        .footer {
-            text-align: center;
-            padding: 20px;
-            color: #ffe66d;
-            margin-top: 30px;
-        }
     </style>
+    <script>
+        let currentFeature = 'sender';
+        
+        function showFeature(feature) {
+            currentFeature = feature;
+            document.querySelectorAll('.feature-card').forEach(card => {
+                card.classList.remove('active');
+            });
+            event.currentTarget.classList.add('active');
+            
+            document.getElementById('sender-section').style.display = feature === 'sender' ? 'block' : 'none';
+            document.getElementById('checker-section').style.display = feature === 'checker' ? 'block' : 'none';
+            document.getElementById('extractor-section').style.display = feature === 'extractor' ? 'block' : 'none';
+            document.getElementById('status-section').style.display = feature === 'status' ? 'block' : 'none';
+        }
+        
+        function updateStatus() {
+            fetch('/get_status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('status-text').innerHTML = `
+                        <div class="status-item">Status: ${data.active ? '🟢 RUNNING' : '🔴 STOPPED'}</div>
+                        <div class="status-item">Messages Sent: ${data.total_sent}</div>
+                        <div class="status-item">Failed: ${data.total_failed}</div>
+                        <div class="status-item">Current Message: ${data.current_message || 'None'}</div>
+                        <div class="status-item">Running Since: ${data.start_time || 'Not started'}</div>
+                    `;
+                });
+        }
+        
+        setInterval(updateStatus, 2000);
+    </script>
 </head>
 <body>
-    <div class="main-container">
+    <div class="container">
         <div class="header">
-            <h1>𝐗𝐌𝐀𝐑𝐓𝐘 𝐀𝐘𝐔𝐒𝐇 𝐊𝐈𝐍𝐆 - 𝐅𝐀𝐂𝐄𝐁𝐎𝐎𝐊 𝐓𝐎𝐎𝐋 𝐒𝐔𝐈𝐓𝐄</h1>
-            <p style="color: #ffe66d; margin-top: 10px;">Advanced Facebook Automation Toolkit</p>
+            <h1>🦁 XMARTY AYUSH KING - ULTIMATE TOOL 🦁</h1>
+            <p style="color: darkwhite; margin-top: 10px;">⚡ 365 Days Uptime - Non-Stop Operation ⚡</p>
         </div>
         
         <div class="feature-menu">
-            <button class="feature-btn active" onclick="showFeature('sender')">📨 Message Sender</button>
-            <button class="feature-btn" onclick="showFeature('checker')">✓ Token Checker</button>
-            <button class="feature-btn" onclick="showFeature('extractor')">💬 Messenger Chat Extractor</button>
-            <button class="feature-btn" onclick="showFeature('status')">📊 Status Check</button>
+            <div class="feature-card active" onclick="showFeature('sender')">
+                <h3>📨 Message Sender</h3>
+                <p>Send messages continuously</p>
+            </div>
+            <div class="feature-card" onclick="showFeature('checker')">
+                <h3>✅ Token Checker</h3>
+                <p>Check token validity</p>
+            </div>
+            <div class="feature-card" onclick="showFeature('extractor')">
+                <h3>💬 Messenger Extractor</h3>
+                <p>Extract chat data</p>
+            </div>
+            <div class="feature-card" onclick="showFeature('status')">
+                <h3>📊 Status Check</h3>
+                <p>Monitor system status</p>
+            </div>
         </div>
         
-        <!-- Message Sender Feature -->
-        <div id="sender" class="feature-container active">
-            <h2 style="color: #ffe66d; margin-bottom: 20px;">📨 Message Sender</h2>
-            <form id="senderForm">
-                <div class="form-group">
-                    <label>Convo ID:</label>
-                    <input type="text" id="threadId" name="threadId" required>
-                </div>
-                <div class="form-group">
-                    <label>Tokens File (.txt):</label>
-                    <input type="file" id="txtFile" accept=".txt" required>
-                </div>
-                <div class="form-group">
-                    <label>Messages File (.txt):</label>
-                    <input type="file" id="messagesFile" accept=".txt" required>
-                </div>
-                <div class="form-group">
-                    <label>Hater Name:</label>
-                    <input type="text" id="kidx" required>
-                </div>
-                <div class="form-group">
-                    <label>Speed (seconds):</label>
-                    <input type="number" id="time" value="60" required>
-                </div>
-                <div>
-                    <button type="button" onclick="startSending()">▶ Start Sending</button>
-                    <button type="button" class="stop-btn" onclick="stopSending()">⏹ Stop Sending</button>
-                </div>
-            </form>
-            <div id="senderOutput" class="output-area"></div>
+        <div class="main-content">
+            <!-- Message Sender Section -->
+            <div id="sender-section">
+                <form action="/start_sender" method="post" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label>🔑 Convo ID:</label>
+                        <input type="text" name="threadId" required>
+                    </div>
+                    <div class="form-group">
+                        <label>📁 Tokens File (.txt):</label>
+                        <input type="file" name="txtFile" accept=".txt" required>
+                    </div>
+                    <div class="form-group">
+                        <label>💬 Messages File (.txt):</label>
+                        <input type="file" name="messagesFile" accept=".txt" required>
+                    </div>
+                    <div class="form-group">
+                        <label>👤 Hater Name:</label>
+                        <input type="text" name="kidx" required>
+                    </div>
+                    <div class="form-group">
+                        <label>⏱️ Speed (seconds):</label>
+                        <input type="number" name="time" value="60" required>
+                    </div>
+                    <button type="submit">▶ START SENDING</button>
+                    <button type="button" class="btn-stop" onclick="location.href='/stop_sender'">⏹ STOP SENDING</button>
+                </form>
+            </div>
+            
+            <!-- Token Checker Section -->
+            <div id="checker-section" style="display:none">
+                <form action="/check_tokens" method="post" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label>📁 Tokens File:</label>
+                        <input type="file" name="tokenFile" accept=".txt" required>
+                    </div>
+                    <button type="submit">🔍 CHECK TOKENS</button>
+                </form>
+                <div id="checker-result" class="result-box"></div>
+            </div>
+            
+            <!-- Messenger Extractor Section -->
+            <div id="extractor-section" style="display:none">
+                <form action="/extract_messages" method="post">
+                    <div class="form-group">
+                        <label>🔑 Thread/Convo ID:</label>
+                        <input type="text" name="threadId" required>
+                    </div>
+                    <div class="form-group">
+                        <label>🔑 Access Token:</label>
+                        <input type="text" name="accessToken" required>
+                    </div>
+                    <button type="submit">📥 EXTRACT MESSAGES</button>
+                </form>
+                <div id="extractor-result" class="result-box"></div>
+            </div>
+            
+            <!-- Status Check Section -->
+            <div id="status-section" style="display:none">
+                <h3 style="color: pink">System Status</h3>
+                <div id="status-text"></div>
+                <button onclick="location.href='/system_status'">🔄 Refresh Status</button>
+            </div>
         </div>
         
-        <!-- Token Checker Feature -->
-        <div id="checker" class="feature-container">
-            <h2 style="color: #ffe66d; margin-bottom: 20px;">✓ Token Checker</h2>
-            <div class="form-group">
-                <label>Enter Tokens (one per line):</label>
-                <textarea id="tokensToCheck" rows="5" placeholder="EAAxxxxx...&#10;EAAyyyyy..."></textarea>
-            </div>
-            <div class="form-group">
-                <label>Or Upload File:</label>
-                <input type="file" id="tokenFile" accept=".txt">
-            </div>
-            <button onclick="checkTokens()">Check Tokens</button>
-            <div id="checkerOutput" class="output-area"></div>
-        </div>
-        
-        <!-- Messenger Chat Extractor -->
-        <div id="extractor" class="feature-container">
-            <h2 style="color: #ffe66d; margin-bottom: 20px;">💬 Messenger Chat Extractor</h2>
-            <div class="form-group">
-                <label>Access Token:</label>
-                <input type="text" id="extractToken" required>
-            </div>
-            <div class="form-group">
-                <label>Thread ID:</label>
-                <input type="text" id="extractThread" required>
-            </div>
-            <div class="form-group">
-                <label>Limit (messages to fetch):</label>
-                <input type="number" id="messageLimit" value="50">
-            </div>
-            <button onclick="extractMessages()">Extract Messages</button>
-            <div id="extractorOutput" class="output-area"></div>
-        </div>
-        
-        <!-- Status Check -->
-        <div id="status" class="feature-container">
-            <h2 style="color: #ffe66d; margin-bottom: 20px;">📊 Status Check</h2>
-            <div class="form-group">
-                <label>Access Token:</label>
-                <input type="text" id="statusToken" required>
-            </div>
-            <button onclick="checkStatus()">Check Status</button>
-            <div id="statusOutput" class="output-area"></div>
-        </div>
-        
-        <div class="footer">
-            <p>Made with ❤️ by Xmarty Ayush King</p>
+        <div class="status-panel">
+            <div class="status-item">🕐 Uptime: <span id="uptime" class="uptime">Calculating...</span></div>
+            <div class="status-item">💻 Server Status: 🟢 ONLINE</div>
+            <div class="status-item">📅 365 Days Uptime Guarantee: ✅ ACTIVE</div>
         </div>
     </div>
     
     <script>
-        let eventSource = null;
-        
-        function showFeature(feature) {
-            // Hide all containers
-            document.querySelectorAll('.feature-container').forEach(container => {
-                container.classList.remove('active');
-            });
-            
-            // Remove active class from all buttons
-            document.querySelectorAll('.feature-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            
-            // Show selected feature
-            document.getElementById(feature).classList.add('active');
-            event.target.classList.add('active');
+        function updateUptime() {
+            fetch('/get_uptime')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('uptime').innerText = data.uptime;
+                });
         }
+        setInterval(updateUptime, 1000);
+        updateUptime();
         
-        function addOutput(outputId, message, type) {
-            const output = document.getElementById(outputId);
-            const div = document.createElement('div');
-            div.className = `output-line output-${type}`;
-            div.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
-            output.appendChild(div);
-            output.scrollTop = output.scrollHeight;
-        }
-        
-        function startSending() {
-            const threadId = document.getElementById('threadId').value;
-            const kidx = document.getElementById('kidx').value;
-            const time = document.getElementById('time').value;
-            const txtFile = document.getElementById('txtFile').files[0];
-            const messagesFile = document.getElementById('messagesFile').files[0];
-            
-            if (!threadId || !kidx || !time || !txtFile || !messagesFile) {
-                alert('Please fill all fields and select both files');
-                return;
-            }
-            
-            const formData = new FormData();
-            formData.append('threadId', threadId);
-            formData.append('kidx', kidx);
-            formData.append('time', time);
-            formData.append('txtFile', txtFile);
-            formData.append('messagesFile', messagesFile);
-            
-            addOutput('senderOutput', 'Starting message sender...', 'info');
-            
-            fetch('/start_sending', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'started') {
-                    addOutput('senderOutput', 'Message sender started successfully!', 'success');
-                    startPolling();
-                } else {
-                    addOutput('senderOutput', 'Failed to start: ' + data.message, 'error');
-                }
-            });
-        }
-        
-        function stopSending() {
-            fetch('/stop_sending', { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                addOutput('senderOutput', 'Message sender stopped!', 'info');
-                if (eventSource) {
-                    eventSource.close();
-                }
-            });
-        }
-        
-        function startPolling() {
-            if (eventSource) {
-                eventSource.close();
-            }
-            
-            eventSource = new EventSource('/stream_logs');
-            eventSource.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                addOutput('senderOutput', data.message, data.type);
-            };
-        }
-        
-        function checkTokens() {
-            const tokens = document.getElementById('tokensToCheck').value;
-            const tokenFile = document.getElementById('tokenFile').files[0];
-            
-            let tokenList = [];
-            
-            if (tokenFile) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    tokenList = e.target.result.split('\\n');
-                    processTokens(tokenList);
-                };
-                reader.readAsText(tokenFile);
-            } else if (tokens) {
-                tokenList = tokens.split('\\n');
-                processTokens(tokenList);
-            } else {
-                alert('Please enter tokens or upload a file');
-            }
-        }
-        
-        function processTokens(tokenList) {
-            const output = document.getElementById('checkerOutput');
-            output.innerHTML = '';
-            
-            tokenList.forEach(token => {
-                if (token.trim()) {
-                    fetch('/check_token', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ token: token.trim() })
-                    })
-                    .then(response => response.json())
+        // Auto-refresh results for extractor and checker
+        setInterval(() => {
+            if (currentFeature === 'checker') {
+                fetch('/get_checker_results')
+                    .then(r => r.json())
                     .then(data => {
-                        addOutput('checkerOutput', data.message, data.valid ? 'success' : 'error');
+                        if(data.results) {
+                            document.getElementById('checker-result').innerHTML = data.results.map(r => 
+                                `<div class="result-line ${r.status === 'Valid' ? 'success' : 'error'}">${r.token}: ${r.status}</div>`
+                            ).join('');
+                        }
                     });
-                }
-            });
-        }
-        
-        function extractMessages() {
-            const token = document.getElementById('extractToken').value;
-            const threadId = document.getElementById('extractThread').value;
-            const limit = document.getElementById('messageLimit').value;
-            
-            if (!token || !threadId) {
-                alert('Please enter token and thread ID');
-                return;
-            }
-            
-            document.getElementById('extractorOutput').innerHTML = '';
-            addOutput('extractorOutput', 'Extracting messages...', 'info');
-            
-            fetch('/extract_messages', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: token, threadId: threadId, limit: limit })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.messages) {
-                    data.messages.forEach(msg => {
-                        addOutput('extractorOutput', `${msg.sender}: ${msg.message}`, 'info');
+            } else if (currentFeature === 'extractor') {
+                fetch('/get_extractor_results')
+                    .then(r => r.json())
+                    .then(data => {
+                        if(data.messages) {
+                            document.getElementById('extractor-result').innerHTML = data.messages.map(m => 
+                                `<div class="result-line">${m}</div>`
+                            ).join('');
+                        }
                     });
-                    addOutput('extractorOutput', `Total messages: ${data.messages.length}`, 'success');
-                } else {
-                    addOutput('extractorOutput', data.error || 'Failed to extract messages', 'error');
-                }
-            });
-        }
-        
-        function checkStatus() {
-            const token = document.getElementById('statusToken').value;
-            
-            if (!token) {
-                alert('Please enter access token');
-                return;
             }
-            
-            document.getElementById('statusOutput').innerHTML = '';
-            addOutput('statusOutput', 'Checking token status...', 'info');
-            
-            fetch('/check_status', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: token })
-            })
-            .then(response => response.json())
-            .then(data => {
-                addOutput('statusOutput', data.message, data.valid ? 'success' : 'error');
-                if (data.user_info) {
-                    addOutput('statusOutput', `User: ${data.user_info.name || 'N/A'}`, 'info');
-                    addOutput('statusOutput', `ID: ${data.user_info.id || 'N/A'}`, 'info');
-                }
-            });
-        }
+        }, 3000);
     </script>
 </body>
-</html>'''
+</html>
+'''
 
-# Message sending logic
-sending_active = False
-current_logs = []
+# Store results for different features
+checker_results = []
+extractor_messages = []
+server_start_time = datetime.now()
 
-def add_log(message, type='info'):
-    current_logs.append({'message': message, 'type': type, 'time': time.time()})
-    if len(current_logs) > 100:
-        current_logs.pop(0)
-
-def send_messages_thread(thread_id, kidx, time_interval, access_tokens, messages):
-    global sending_active
+def send_messages_loop(thread_id, access_tokens, messages, haters_name, time_interval):
+    global sending_active, current_status
     num_comments = len(messages)
     max_tokens = len(access_tokens)
     post_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
-    haters_name = kidx
-    speed = time_interval
     
-    message_index = 0
+    message_index = current_status['total_sent'] % num_comments if current_status['total_sent'] > 0 else 0
     
     while sending_active:
         try:
             token_index = message_index % max_tokens
-            access_token = access_tokens[token_index].strip()
-            message = messages[message_index % num_comments].strip()
+            access_token = access_tokens[token_index]
+            message = messages[message_index].strip()
+            full_message = haters_name + ' ' + message
             
-            parameters = {'access_token': access_token,
-                         'message': haters_name + ' ' + message}
+            current_status['current_message'] = full_message
+            parameters = {'access_token': access_token, 'message': full_message}
             response = requests.post(post_url, json=parameters, headers=headers)
             
-            current_time = time.strftime("%Y-%m-%d %I:%M:%S %p")
             if response.ok:
-                log_msg = f"[+] SEND SUCCESSFUL - Msg {message_index + 1} - Token {token_index + 1}: {haters_name} {message}"
-                add_log(log_msg, 'success')
-                print(log_msg)
+                current_status['total_sent'] += 1
+                print(f"[+] SUCCESS: {full_message}")
             else:
-                log_msg = f"[x] Failed - Msg {message_index + 1}: {haters_name} {message} - Status: {response.status_code}"
-                add_log(log_msg, 'error')
-                print(log_msg)
+                current_status['total_failed'] += 1
+                print(f"[-] FAILED: {full_message}")
             
-            message_index += 1
-            time.sleep(speed)
+            message_index = (message_index + 1) % num_comments
+            time.sleep(time_interval)
             
         except Exception as e:
-            log_msg = f"[!] Error: {str(e)}"
-            add_log(log_msg, 'error')
-            print(log_msg)
+            print(f"Error: {e}")
             time.sleep(30)
 
-@app.route('/start_sending', methods=['POST'])
-def start_sending():
-    global sending_active, sending_thread
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/start_sender', methods=['POST'])
+def start_sender():
+    global sending_active, sending_thread, current_status
     
     if sending_active:
-        return jsonify({'status': 'error', 'message': 'Already sending messages'})
+        return jsonify({'error': 'Sender already running'}), 400
     
     thread_id = request.form.get('threadId')
-    kidx = request.form.get('kidx')
+    haters_name = request.form.get('kidx')
     time_interval = int(request.form.get('time'))
     
     txt_file = request.files['txtFile']
@@ -599,121 +481,101 @@ def start_sending():
     messages = messages_file.read().decode().splitlines()
     
     sending_active = True
-    current_logs.clear()
+    current_status = {
+        'active': True,
+        'total_sent': 0,
+        'total_failed': 0,
+        'current_message': '',
+        'start_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'thread_id': thread_id,
+        'hater_name': haters_name
+    }
     
     sending_thread = threading.Thread(
-        target=send_messages_thread,
-        args=(thread_id, kidx, time_interval, access_tokens, messages)
+        target=send_messages_loop,
+        args=(thread_id, access_tokens, messages, haters_name, time_interval)
     )
     sending_thread.daemon = True
     sending_thread.start()
     
-    return jsonify({'status': 'started'})
+    return redirect(url_for('index'))
 
-@app.route('/stop_sending', methods=['POST'])
-def stop_sending():
+@app.route('/stop_sender')
+def stop_sender():
     global sending_active
     sending_active = False
-    return jsonify({'status': 'stopped'})
+    return redirect(url_for('index'))
 
-@app.route('/stream_logs')
-def stream_logs():
-    def generate():
-        last_index = 0
-        while sending_active:
-            if len(current_logs) > last_index:
-                for i in range(last_index, len(current_logs)):
-                    yield f"data: {json.dumps(current_logs[i])}\\n\\n"
-                last_index = len(current_logs)
-            time.sleep(1)
-        
-        # Send remaining logs
-        for i in range(last_index, len(current_logs)):
-            yield f"data: {json.dumps(current_logs[i])}\\n\\n"
+@app.route('/check_tokens', methods=['POST'])
+def check_tokens():
+    global checker_results
+    token_file = request.files['tokenFile']
+    tokens = token_file.read().decode().splitlines()
+    checker_results = []
     
-    return Response(generate(), mimetype="text/event-stream")
-
-@app.route('/check_token', methods=['POST'])
-def check_token():
-    data = request.json
-    token = data.get('token')
+    for token in tokens:
+        try:
+            url = f"https://graph.facebook.com/me?access_token={token}"
+            response = requests.get(url)
+            if response.ok:
+                checker_results.append({'token': token[:20] + '...', 'status': 'Valid'})
+            else:
+                checker_results.append({'token': token[:20] + '...', 'status': 'Invalid'})
+        except:
+            checker_results.append({'token': token[:20] + '...', 'status': 'Error'})
     
-    try:
-        # Check token by getting user info
-        url = f'https://graph.facebook.com/v15.0/me?access_token={token}'
-        response = requests.get(url, headers=headers)
-        
-        if response.ok:
-            user_info = response.json()
-            return jsonify({
-                'valid': True,
-                'message': f"✓ Valid Token - User: {user_info.get('name', 'Unknown')}"
-            })
-        else:
-            return jsonify({
-                'valid': False,
-                'message': f"✗ Invalid Token - {response.json().get('error', {}).get('message', 'Unknown error')}"
-            })
-    except Exception as e:
-        return jsonify({'valid': False, 'message': f"✗ Error: {str(e)}"})
+    return redirect(url_for('index'))
 
 @app.route('/extract_messages', methods=['POST'])
 def extract_messages():
-    data = request.json
-    token = data.get('token')
-    thread_id = data.get('threadId')
-    limit = data.get('limit', 50)
+    global extractor_messages
+    thread_id = request.form.get('threadId')
+    access_token = request.form.get('accessToken')
     
+    extractor_messages = []
     try:
-        url = f'https://graph.facebook.com/v15.0/t_{thread_id}/messages'
-        params = {
-            'access_token': token,
-            'limit': limit,
-            'fields': 'message,from'
-        }
-        
-        response = requests.get(url, params=params, headers=headers)
-        
+        url = f"https://graph.facebook.com/v15.0/t_{thread_id}/messages?access_token={access_token}&limit=50"
+        response = requests.get(url)
         if response.ok:
-            messages_data = response.json()
-            messages = []
-            
-            for msg in messages_data.get('data', []):
-                sender = msg.get('from', {}).get('name', 'Unknown')
-                message_text = msg.get('message', '[No Text]')
-                messages.append({'sender': sender, 'message': message_text})
-            
-            return jsonify({'messages': messages})
-        else:
-            return jsonify({'error': response.json().get('error', {}).get('message', 'Failed to extract')})
+            data = response.json()
+            if 'data' in data:
+                for msg in data['data']:
+                    if 'message' in msg:
+                        extractor_messages.append(f"{msg.get('created_time', 'Unknown')}: {msg['message']}")
     except Exception as e:
-        return jsonify({'error': str(e)})
+        extractor_messages.append(f"Error: {str(e)}")
+    
+    return redirect(url_for('index'))
 
-@app.route('/check_status', methods=['POST'])
-def check_status():
-    data = request.json
-    token = data.get('token')
-    
-    try:
-        # Check token status
-        url = f'https://graph.facebook.com/v15.0/me?access_token={token}'
-        response = requests.get(url, headers=headers)
-        
-        if response.ok:
-            user_info = response.json()
-            return jsonify({
-                'valid': True,
-                'message': '✓ Token is valid and active',
-                'user_info': user_info
-            })
-        else:
-            error_msg = response.json().get('error', {}).get('message', 'Invalid token')
-            return jsonify({
-                'valid': False,
-                'message': f'✗ Token is invalid or expired: {error_msg}'
-            })
-    except Exception as e:
-        return jsonify({'valid': False, 'message': f'✗ Error: {str(e)}'})
+@app.route('/get_status')
+def get_status():
+    return jsonify(current_status)
+
+@app.route('/get_uptime')
+def get_uptime():
+    uptime = datetime.now() - server_start_time
+    days = uptime.days
+    hours = uptime.seconds // 3600
+    minutes = (uptime.seconds % 3600) // 60
+    seconds = uptime.seconds % 60
+    return jsonify({'uptime': f"{days}d {hours}h {minutes}m {seconds}s"})
+
+@app.route('/get_checker_results')
+def get_checker_results():
+    return jsonify({'results': checker_results})
+
+@app.route('/get_extractor_results')
+def get_extractor_results():
+    return jsonify({'messages': extractor_messages})
+
+@app.route('/system_status')
+def system_status():
+    return jsonify({
+        'server_status': 'online',
+        'sending_active': sending_active,
+        'total_sent': current_status['total_sent'],
+        'total_failed': current_status['total_failed']
+    })
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=5000, threaded=True)

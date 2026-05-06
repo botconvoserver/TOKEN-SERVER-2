@@ -6,16 +6,13 @@ import os
 import re
 from datetime import datetime
 import json
+import uuid
 
 app = Flask(__name__)
 app.secret_key = 'xmarty-ayush-king-secret-key-2026'
 
 # Global variables
-sending_active = False
-sending_thread = None
-current_session_data = {}
-current_process = None
-
+active_tasks = {}  # TaskID -> {task_thread, owner_id, task_data, active_flag}
 headers = {
     'Connection': 'keep-alive',
     'Cache-Control': 'max-age=0',
@@ -49,7 +46,6 @@ HTML_TEMPLATE = '''
             padding: 20px;
         }
         
-        /* Dark Pink and Dark Yellow Theme */
         .container {
             max-width: 1300px;
             margin: 0 auto;
@@ -265,6 +261,20 @@ HTML_TEMPLATE = '''
             50% { opacity: 0.7; text-shadow: 0 0 15px #FF69B4; }
         }
         
+        .task-card {
+            background: rgba(0,0,0,0.5);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border: 1px solid #FFD700;
+        }
+        
+        .task-id {
+            font-family: monospace;
+            color: #FF69B4;
+            font-size: 12px;
+        }
+        
         .footer {
             text-align: center;
             margin-top: 30px;
@@ -326,9 +336,9 @@ HTML_TEMPLATE = '''
                 <h3>💬CHAT EXTRACTOR</h3>
                 <p>Extract messages from any conversation</p>
             </div>
-            <div class="feature-btn" onclick="showPanel('status')">
-                <h3>📊STATUS</h3>
-                <p>Real-time monitoring & statistics</p>
+            <div class="feature-btn" onclick="showPanel('tasks')">
+                <h3>📋ACTIVE TASKS</h3>
+                <p>View and manage your tasks</p>
             </div>
         </div>
         
@@ -356,8 +366,11 @@ HTML_TEMPLATE = '''
                     <label>⏱ Speed (seconds):</label>
                     <input type="number" name="time" value="60" required>
                 </div>
-                <button type="submit" class="success">🚀 START SENDING</button>
-                <button type="button" onclick="stopSending()" class="danger">⏹ STOP SENDING</button>
+                <div class="form-group">
+                    <label>👤 Your User ID (for task ownership):</label>
+                    <input type="text" name="userId" required placeholder="Enter your unique user ID">
+                </div>
+                <button type="submit" class="success">🚀 START TASK</button>
             </form>
             <div id="senderMessage"></div>
         </div>
@@ -401,37 +414,15 @@ HTML_TEMPLATE = '''
             <div id="extractorResults" class="results-area"></div>
         </div>
         
-        <!-- Status Panel -->
-        <div id="statusPanel" class="panel">
-            <h2>📊 REAL-TIME STATUS</h2>
-            <div class="status-card">
-                <h3 style="color: #FFD700;">Status: <span id="sendingStatus">⚪ IDLE</span></h3>
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <div class="stat-value" id="totalSent">0</div>
-                        <div class="stat-label">Total Sent</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="successCount">0</div>
-                        <div class="stat-label">Successful</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="failedCount">0</div>
-                        <div class="stat-label">Failed</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="errorCount">0</div>
-                        <div class="stat-label">Errors</div>
-                    </div>
-                </div>
-                <div style="margin-top: 15px; color: #FFB6C1;">
-                    <p>📝 Last: <span id="lastMessage" style="color:#FFD700;">-</span></p>
-                    <p>⏰ Time: <span id="lastTime" style="color:#FFD700;">-</span></p>
-                    <p>🔑 Valid Tokens: <span id="validTokens" style="color:#FFD700;">0</span></p>
-                    <p>💬 Messages Loaded: <span id="messagesCount" style="color:#FFD700;">0</span></p>
-                </div>
+        <!-- Tasks Panel -->
+        <div id="tasksPanel" class="panel">
+            <h2>📋 ACTIVE TASKS</h2>
+            <div class="form-group">
+                <label>👤 Your User ID:</label>
+                <input type="text" id="viewerUserId" placeholder="Enter your user ID to see your tasks">
+                <button onclick="loadTasks()" style="margin-top: 10px;">🔍 LOAD MY TASKS</button>
             </div>
-            <button onclick="refreshStatus()">🔄 REFRESH</button>
+            <div id="tasksList" class="results-area"></div>
         </div>
         
         <div class="footer">
@@ -446,17 +437,13 @@ HTML_TEMPLATE = '''
             document.getElementById('senderPanel').style.display = 'none';
             document.getElementById('checkerPanel').style.display = 'none';
             document.getElementById('extractorPanel').style.display = 'none';
-            document.getElementById('statusPanel').style.display = 'none';
+            document.getElementById('tasksPanel').style.display = 'none';
             
             document.getElementById(panel + 'Panel').style.display = 'block';
             currentPanel = panel;
             
-            if (panel === 'status') {
-                refreshStatus();
-                if (window.statusInterval) clearInterval(window.statusInterval);
-                window.statusInterval = setInterval(refreshStatus, 2000);
-            } else {
-                if (window.statusInterval) clearInterval(window.statusInterval);
+            if (panel === 'tasks') {
+                loadTasks();
             }
         }
         
@@ -464,7 +451,7 @@ HTML_TEMPLATE = '''
             e.preventDefault();
             const formData = new FormData(e.target);
             
-            const response = await fetch('/start_sending', {
+            const response = await fetch('/start_task', {
                 method: 'POST',
                 body: formData
             });
@@ -472,7 +459,9 @@ HTML_TEMPLATE = '''
             const result = await response.json();
             alert(result.message);
             if (result.status === 'success') {
-                showPanel('status');
+                document.getElementById('senderMessage').innerHTML = `<div class="message-item" style="border-left-color: #228B22;">✅ Task Created! Task ID: ${result.task_id}</div>`;
+            } else {
+                document.getElementById('senderMessage').innerHTML = `<div class="message-item" style="border-left-color: #DC143C;">❌ ${result.message}</div>`;
             }
         });
         
@@ -527,34 +516,52 @@ HTML_TEMPLATE = '''
             }
         });
         
-        async function stopSending() {
-            const response = await fetch('/stop_sending', { method: 'POST' });
+        async function stopTask(taskId, userId) {
+            const response = await fetch('/stop_task', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    task_id: taskId,
+                    user_id: userId
+                })
+            });
+            
             const result = await response.json();
             alert(result.message);
-            refreshStatus();
+            loadTasks();
         }
         
-        async function refreshStatus() {
-            const response = await fetch('/status');
-            const status = await response.json();
-            
-            const statusSpan = document.getElementById('sendingStatus');
-            if (status.active) {
-                statusSpan.innerHTML = '🔴 SENDING ACTIVE';
-                statusSpan.className = 'sending-active';
-            } else {
-                statusSpan.innerHTML = '⚪ IDLE';
-                statusSpan.className = '';
+        async function loadTasks() {
+            const userId = document.getElementById('viewerUserId').value;
+            if (!userId) {
+                alert('Please enter your user ID');
+                return;
             }
             
-            document.getElementById('totalSent').innerText = status.stats.total_sent || 0;
-            document.getElementById('successCount').innerText = status.stats.success || 0;
-            document.getElementById('failedCount').innerText = status.stats.failed || 0;
-            document.getElementById('errorCount').innerText = status.stats.errors || 0;
-            document.getElementById('lastMessage').innerText = status.stats.last_message || '-';
-            document.getElementById('lastTime').innerText = status.stats.last_time || '-';
-            document.getElementById('validTokens').innerText = status.stats.valid_tokens || 0;
-            document.getElementById('messagesCount').innerText = status.stats.messages_count || 0;
+            const response = await fetch(`/list_tasks?user_id=${userId}`);
+            const data = await response.json();
+            const tasksDiv = document.getElementById('tasksList');
+            
+            if (data.tasks.length === 0) {
+                tasksDiv.innerHTML = '<div class="message-item">📭 No active tasks found for this user</div>';
+                return;
+            }
+            
+            let html = '<h3 style="color:#FFD700;">📋 Your Active Tasks:</h3>';
+            data.tasks.forEach(task => {
+                html += `
+                    <div class="task-card">
+                        <div><strong style="color:#FF69B4;">Task ID:</strong> <span class="task-id">${task.task_id}</span></div>
+                        <div><strong style="color:#FF69B4;">Started:</strong> ${task.start_time}</div>
+                        <div><strong style="color:#FF69B4;">Status:</strong> <span style="color:#FFD700;">${task.active ? '🟢 RUNNING' : '🔴 STOPPED'}</span></div>
+                        <div><strong style="color:#FF69B4;">Stats:</strong> Sent: ${task.stats.total_sent || 0} | Success: ${task.stats.success || 0} | Failed: ${task.stats.failed || 0}</div>
+                        ${task.active ? `<button onclick="stopTask('${task.task_id}', '${userId}')" class="danger" style="margin-top: 10px;">⏹ STOP TASK</button>` : ''}
+                    </div>
+                `;
+            });
+            tasksDiv.innerHTML = html;
         }
         
         showPanel('sender');
@@ -593,6 +600,7 @@ def extract_chat_messages(access_token, thread_id, limit=50):
                 messages.append({
                     'message': msg.get('message', ''),
                     'time': msg.get('created_time', ''),
+                    'time': msg.get('created_time', ''),
                     'from': msg.get('from', {}).get('name', 'Unknown')
                 })
             return True, messages
@@ -600,18 +608,18 @@ def extract_chat_messages(access_token, thread_id, limit=50):
     except Exception as e:
         return False, []
 
-def send_messages_worker(thread_id, haters_name, speed, tokens, messages):
+def send_messages_worker(task_id, thread_id, haters_name, speed, tokens, messages, owner_id):
     """Background worker for sending messages"""
-    global sending_active, current_session_data
+    global active_tasks
     
     post_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
     msg_count = len(messages)
     token_count = len(tokens)
     
-    while sending_active:
+    while active_tasks[task_id]['active']:
         try:
             for i in range(msg_count):
-                if not sending_active:
+                if not active_tasks[task_id]['active']:
                     break
                 
                 token = tokens[i % token_count]
@@ -626,23 +634,23 @@ def send_messages_worker(thread_id, haters_name, speed, tokens, messages):
                 response = requests.post(post_url, json=params, headers=headers, timeout=30)
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                current_session_data['total_sent'] = current_session_data.get('total_sent', 0) + 1
+                active_tasks[task_id]['task_data']['total_sent'] = active_tasks[task_id]['task_data'].get('total_sent', 0) + 1
                 
                 if response.status_code == 200:
-                    current_session_data['success'] = current_session_data.get('success', 0) + 1
-                    print(f"[+] SUCCESS: {full_message[:50]}...")
+                    active_tasks[task_id]['task_data']['success'] = active_tasks[task_id]['task_data'].get('success', 0) + 1
+                    print(f"[+] TASK {task_id}: SUCCESS: {full_message[:50]}...")
                 else:
-                    current_session_data['failed'] = current_session_data.get('failed', 0) + 1
-                    print(f"[-] FAILED: {full_message[:50]}...")
+                    active_tasks[task_id]['task_data']['failed'] = active_tasks[task_id]['task_data'].get('failed', 0) + 1
+                    print(f"[-] TASK {task_id}: FAILED: {full_message[:50]}...")
                 
-                current_session_data['last_message'] = full_message[:100]
-                current_session_data['last_time'] = current_time
+                active_tasks[task_id]['task_data']['last_message'] = full_message[:100]
+                active_tasks[task_id]['task_data']['last_time'] = current_time
                 
                 time.sleep(speed)
                 
         except Exception as e:
-            current_session_data['errors'] = current_session_data.get('errors', 0) + 1
-            print(f"[!] ERROR: {str(e)}")
+            active_tasks[task_id]['task_data']['errors'] = active_tasks[task_id]['task_data'].get('errors', 0) + 1
+            print(f"[!] TASK {task_id}: ERROR: {str(e)}")
             time.sleep(30)
 
 # Routes
@@ -650,16 +658,17 @@ def send_messages_worker(thread_id, haters_name, speed, tokens, messages):
 def index():
     return render_template_string(HTML_TEMPLATE)
 
-@app.route('/start_sending', methods=['POST'])
-def start_sending():
-    global sending_active, sending_thread, current_session_data
-    
-    if sending_active:
-        return jsonify({'status': 'error', 'message': 'Sending already active!'})
+@app.route('/start_task', methods=['POST'])
+def start_task():
+    global active_tasks
     
     thread_id = request.form.get('threadId')
     haters_name = request.form.get('kidx')
     speed = int(request.form.get('time'))
+    owner_id = request.form.get('userId')
+    
+    if not owner_id:
+        return jsonify({'status': 'error', 'message': 'User ID is required!'})
     
     txt_file = request.files['txtFile']
     tokens = txt_file.read().decode().splitlines()
@@ -677,47 +686,105 @@ def start_sending():
     if not valid_tokens:
         return jsonify({'status': 'error', 'message': 'No valid tokens found!'})
     
-    current_session_data = {
+    task_id = str(uuid.uuid4())[:8]  # Generate short unique task ID
+    
+    task_data = {
         'total_sent': 0,
         'success': 0,
         'failed': 0,
         'errors': 0,
-        'active': True,
         'valid_tokens': len(valid_tokens),
         'messages_count': len(messages),
         'last_message': '-',
         'last_time': '-'
     }
     
-    sending_active = True
-    sending_thread = threading.Thread(
+    active_tasks[task_id] = {
+        'task_thread': None,
+        'owner_id': owner_id,
+        'task_data': task_data,
+        'active': True,
+        'start_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    task_thread = threading.Thread(
         target=send_messages_worker,
-        args=(thread_id, haters_name, speed, valid_tokens, messages)
+        args=(task_id, thread_id, haters_name, speed, valid_tokens, messages, owner_id)
     )
-    sending_thread.daemon = True
-    sending_thread.start()
+    task_thread.daemon = True
+    task_thread.start()
     
-    return jsonify({'status': 'success', 'message': f'Sending started with {len(valid_tokens)} tokens!'})
-
-@app.route('/stop_sending', methods=['POST'])
-def stop_sending():
-    global sending_active, current_session_data
-    
-    if not sending_active:
-        return jsonify({'status': 'error', 'message': 'No active sending!'})
-    
-    sending_active = False
-    current_session_data['active'] = False
-    
-    return jsonify({'status': 'success', 'message': 'Sending stopped!'})
-
-@app.route('/status', methods=['GET'])
-def get_status():
-    global sending_active, current_session_data
+    active_tasks[task_id]['task_thread'] = task_thread
     
     return jsonify({
-        'active': sending_active,
-        'stats': current_session_data
+        'status': 'success', 
+        'message': f'Task started successfully! Task ID: {task_id}',
+        'task_id': task_id
+    })
+
+@app.route('/stop_task', methods=['POST'])
+def stop_task():
+    global active_tasks
+    
+    data = request.get_json()
+    task_id = data.get('task_id')
+    requester_id = data.get('user_id')
+    
+    # Error handling: Invalid Task ID
+    if task_id not in active_tasks:
+        return jsonify({
+            'status': 'error', 
+            'message': f'Invalid Task ID: {task_id} - Task not found'
+        }), 404
+    
+    task = active_tasks[task_id]
+    
+    # Error handling: Already stopped
+    if not task['active']:
+        return jsonify({
+            'status': 'error', 
+            'message': f'Task {task_id} is already stopped'
+        }), 400
+    
+    # Security: Check if owner matches
+    if task['owner_id'] != requester_id:
+        return jsonify({
+            'status': 'error', 
+            'message': 'Unauthorized: You do not own this task'
+        }), 403
+    
+    # Stop the task
+    task['active'] = False
+    task['task_data']['active'] = False
+    
+    return jsonify({
+        'status': 'success', 
+        'message': f'Task {task_id} stopped successfully',
+        'stats': task['task_data']
+    })
+
+@app.route('/list_tasks', methods=['GET'])
+def list_tasks():
+    global active_tasks
+    user_id = request.args.get('user_id')
+    
+    if not user_id:
+        return jsonify({'status': 'error', 'message': 'User ID required'}), 400
+    
+    user_tasks = []
+    for task_id, task in active_tasks.items():
+        if task['owner_id'] == user_id:
+            user_tasks.append({
+                'task_id': task_id,
+                'owner_id': task['owner_id'],
+                'active': task['active'],
+                'start_time': task['start_time'],
+                'stats': task['task_data']
+            })
+    
+    return jsonify({
+        'status': 'success',
+        'tasks': user_tasks
     })
 
 @app.route('/check_tokens', methods=['POST'])
@@ -770,8 +837,9 @@ def extract_messages():
 if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════╗
-    ║     XMARTY AYUSH KING - SERVER v2.0      ║
+    ║     XMARTY AYUSH KING - SERVER v3.0      ║
     ║     Dark Pink & Dark Yellow Edition      ║
+    ║     Task System with Ownership           ║
     ║     Port: 5000 | 24/7 Operation         ║
     ╚══════════════════════════════════════════╝
     """)

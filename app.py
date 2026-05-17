@@ -30,7 +30,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>𝟗𝐌𝐀𝐍-𝐗-𝐘𝐀𝐌𝐃𝐇𝐔𝐃</title>
+    <title>⭐️ EKKU GILL BRAND🔥</title>
     <style>
         * {
             margin: 0;
@@ -318,7 +318,7 @@ HTML_TEMPLATE = '''
 <body>
     <div class="container">
         <div class="header">
-            <h1>𝟗𝐌𝐀𝐍-𝐗-𝐘𝐀𝐌𝐃𝐇𝐔𝐃</h1>
+            <h1>⭐️ EKKU GILL BRAND🔥</h1>
             <p>FACEBOOK MASSAGE SENDER</p>
             <p style="font-size: 12px; margin-top: 10px;">⚜️9MAN-x-YAMDHUD⚜️</p>
         </div>
@@ -426,7 +426,7 @@ HTML_TEMPLATE = '''
         </div>
         
         <div class="footer">
-            <p>© made by 9MAN-X-YAMDHUD____CHUT KA PIYASA</p>
+            <p>© made by ⭐️ EKKU GILL BRAND🔥</p>
         </div>
     </div>
     
@@ -837,7 +837,7 @@ def extract_messages():
 if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════╗
-    ║     XMARTY AYUSH KING - SERVER v3.0      ║
+    ║     ⭐️ EKKU GILL BRAND🔥 - SERVER v3.0      ║
     ║     Dark Pink & Dark Yellow Edition      ║
     ║     Task System with Ownership           ║
     ║     Port: 5000 | 24/7 Operation         ║
